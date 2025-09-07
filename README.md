@@ -1,147 +1,85 @@
-# MCP (Model Context Protocol) – FEL Server
+# FEL MCP Server (Local)
 
-This document describes the **MCP server** implemented without any SDK, using **STDIN/STDOUT + JSON-RPC 2.0**.  
-It explains the execution flow, tool parameters, return values, and how to test the server from a terminal.
+Local **Model Context Protocol (MCP)** server for **Guatemalan FEL** invoices.  
+Exposes tools to **validate FEL XML** and **render branded PDFs**. Designed for **WSL (Ubuntu)** or Linux and can be consumed by MCP hosts (e.g., Claude Desktop).
 
-The design follows the **public MCP architecture** proposed by Anthropic.
+> This repository focuses on the **FEL MCP server**. It’s often used alongside a chatbot client; see “Related repositories”.
 
-## 1. MCP in this Context
+## 🔗 Related repositories
 
-* **Server (provider of capabilities)**: `server_stdio.py` exposes tools (`fel_validate`, `fel_render`, `fel_batch`) via **JSON-RPC 2.0** over STDIN/STDOUT.
-* **Host / Client**: the process that spawns the server and issues MCP calls (e.g., the CLI chatbot).
-* **Key messages**:
-  * `initialize` -> handshake and capabilities declaration.
-  * `tools/list` -> list of available tools.
-  * `tools/call` -> invocation of a tool with arguments.
+- [Chatbot (CLI / UI)](https://github.com/JosueSay/ChatBotMCP) — client that can drive this MCP server.
+- [Reference: OpenAI Chat API Example](https://github.com/JosueSay/Selectivo_IA/blob/main/docs_assistant/README.md) — reference only (patterns for API connectivity and instruction context).
 
-## 2. Sequence Diagram
+## ✨ Tools (MCP)
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Host as Host/Client (Chat CLI)
-    participant Server as MCP Server (server_stdio.py)
-    participant FEL as FEL Logic (config.py / fel_pdf.py)
+- `fel_validate`  
+  **required**: `xml_path` (absolute WSL path)  
+  Checks required fields and totals (subtotal, VAT 12%, total).
 
-    Note over Host,Server: Transport channel = STDIN/STDOUT (one JSON message per line)
+- `fel_render`  
+  **required**: `xml_path`, `out_path` (absolute WSL paths)  
+  Renders a branded PDF from the FEL XML.
 
-    Host->>Server: initialize { jsonrpc:"2.0", id:1, method:"initialize", params:{} }
-    Server-->>Host: result { protocolVersion, serverInfo, capabilities }
+- `fel_batch`  
+  **required**: `dir_xml`, `out_dir` (absolute WSL paths)  
+  Processes all `*.xml` in `dir_xml`, produces one PDF per XML in `out_dir`, and writes `manifest.json`.
 
-    Host->>Server: tools/list { id:2, method:"tools/list" }
-    Server-->>Host: result { tools:[fel_validate, fel_render, fel_batch] }
+> Use **absolute WSL paths** like `/mnt/d/...` in all arguments and environment variables.
 
-    Host->>Server: tools/call { id:3, name:"fel_validate", arguments:{ xml_path:"data/xml/factura.xml" } }
-    Server->>FEL: readFelXml(xmlPath)
-    FEL-->>Server: parsed data + totals
-    Server-->>Host: result { content:[{ type:"text", text:"{ ok, issues, totals }" }] }
+## ⚙️ Requirements
 
-    Host->>Server: tools/call { id:4, name:"fel_render", arguments:{ xml_path, logo_path?, theme?, out_path? } }
-    Server->>FEL: generatePdf(xmlPath, logoPath, outPath)
-    FEL-->>Server: PDF generated
-    Server-->>Host: result { content:[{ type:"text", text:"{ ok:true, pdf_path }" }] }
+- Python **3.12**
+- **WSL Ubuntu 22.04** (or Linux)
+- Virtual environment (recommended)
 
-    Host->>Server: tools/call { id:5, name:"fel_batch", arguments:{ dir_xml, out_dir? } }
-    Server->>FEL: generatePdf() for each XML + manifest.json
-    FEL-->>Server: count + paths
-    Server-->>Host: result { content:[{ type:"text", text:"{ ok, count, out_dir, manifest_path }" }] }
+## 🔧 Installation
+
+```bash
+git clone <REPO_URL>
+cd <REPO_DIR>
+
+python3.12 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## 3. Tool API
+Create your environment file (use **absolute WSL paths**):
 
-### 3.1 `fel_validate`
-
-* **Description**: Validates a FEL XML file, checks **VAT 12%** and ensures `total = subtotal + VAT`. Verifies required fields.
-* **Input (`arguments`)**:
-
-  * `xml_path` *(string, required)* -> path to the FEL XML.
-* **Return (`result.content[0].text`)**: JSON text:
-
-```json
-{
-  "ok": true,
-  "issues": [],
-  "totals": { "subtotal": "8010.59", "iva": "961.27", "total": "8971.86" }
-}
+```bash
+cp .env.example .env
 ```
 
-### 3.2 `fel_render`
+Key variables used by the server (placeholders shown):
 
-* **Description**: Renders a **branded PDF** (logo, fonts, colors) from a FEL XML.
-* **Input (`arguments`)**:
+```env
+# I/O
+FEL_XML_PATH=/ABSOLUTE/PATH/TO/REPO/data/xml/factura.xml
+FEL_OUTPUT_PDF=/ABSOLUTE/PATH/TO/REPO/data/out/factura.pdf
+FEL_BATCH_OUT_DIR=/ABSOLUTE/PATH/TO/REPO/data/out
+# optional logo
+FEL_LOGO_PATH=/ABSOLUTE/PATH/TO/REPO/data/logos/logo.jpg
 
-  * `xml_path` *(string, required)*
-  * `logo_path` *(string|null, optional)* -> override logo path, default = `LOGO_PATH`.
-  * `theme` *(string|null, optional)* -> reserved for future use.
-  * `out_path` *(string|null, optional)* -> override output path, default = `OUTPUT_PDF`.
-* **Return**:
+# Fonts
+FEL_ACTIVE_FONT=1
+FEL_FONT_DIR_MONTSERRAT=/ABSOLUTE/PATH/TO/REPO/assets/fonts/Montserrat/static
+FEL_FONT_DIR_ROBOTOMONO=/ABSOLUTE/PATH/TO/REPO/assets/fonts/Roboto_Mono/static
 
-```json
-{ "ok": true, "pdf_path": "data/out/factura.pdf" }
+# Theme/Layout
+FEL_THEME=light
+FEL_QR_SIZE=150
+FEL_TOP_BAR_HEIGHT=20
 ```
 
-### 3.3 `fel_batch`
+## ▶️ Run the server (STDIO)
 
-* **Description**: Processes a directory of FEL XML files, generates one PDF per file, and builds a `manifest.json`.
-* **Input (`arguments`)**:
-
-  * `dir_xml` *(string, required)* -> directory with `*.xml`.
-  * `out_dir` *(string|null, optional)* -> output directory, default = `data/out`.
-* **Return**:
-
-```json
-{ "ok": true, "count": 5, "out_dir": "data/out", "manifest_path": "data/out/manifest.json" }
+```bash
+source venv/bin/activate
+python servers/fel_mcp_server/server_stdio.py
 ```
 
-## 4. MCP Contract
+## 🧪 Quick CLI tests (JSON-RPC over stdin)
 
-* **Transport**: STDIN/STDOUT, one JSON message per line.
-* **JSON-RPC Schema**: every request includes `jsonrpc:"2.0"`, `id`, `method`, `params?`.
-* **Supported methods**:
-
-  * `initialize` -> returns `{ protocolVersion, serverInfo, capabilities }`.
-  * `tools/list` -> returns `{ tools:[...] }` including `name`, `description`, and `inputSchema`.
-  * `tools/call` -> executes a tool with `{ name, arguments }` and responds with `{ result: { content:[...] } }`.
-* **Errors**: JSON-RPC standard:
-
-```json
-{ "jsonrpc":"2.0", "id": <id>, "error": { "code": <int>, "message": "<desc>" } }
-```
-
-## 5. Environment & Parameters
-
-The server reads configuration from `.env` via `config.py`:
-
-* **Input/Output**:
-
-  * `FEL_XML_PATH`, `FEL_LOGO_PATH`, `FEL_OUTPUT_PDF`
-* **Fonts/Themes**:
-
-  * `FEL_ACTIVE_FONT`, `FEL_FONT_DIR_MONTSERRAT`, `FEL_FONT_DIR_ROBOTOMONO`, `FEL_THEME`
-* **Layout**:
-
-  * `FEL_QR_SIZE`, `FEL_TOP_BAR_HEIGHT`
-* **Footer Contact**:
-
-  * `FEL_WEBSITE`, `FEL_PHONE`, `FEL_EMAIL`
-
-At runtime, `fel_render` and `fel_batch` allow overriding default values via arguments.
-
-## 6. Execution Flow
-
-1. **Startup**: Host launches `server_stdio.py` as a subprocess.
-2. **Handshake**: Host sends `initialize`; server responds with capabilities.
-3. **Discovery**: Host calls `tools/list` to get available tools and JSON Schemas.
-4. **Invocation**:
-
-   * `fel_validate` -> parses XML, checks VAT & totals.
-   * `fel_render` -> builds branded PDF.
-   * `fel_batch` -> processes multiple XML files.
-5. **Result**: server wraps responses into `result.content[0].text` (JSON as string).
-
-## 7. CLI Test Examples
-
-### 7.1 Initialize + List Tools
+**List tools:**
 
 ```bash
 printf '%s\n' \
@@ -150,42 +88,64 @@ printf '%s\n' \
 | python servers/fel_mcp_server/server_stdio.py
 ```
 
-### 7.2 Validate XML
+**Validate one XML:**
 
 ```bash
 printf '%s\n' \
 '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-'{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-'{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fel_validate","arguments":{"xml_path":"data/xml/factura.xml"}}}' \
+'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fel_validate","arguments":{"xml_path":"/ABSOLUTE/PATH/TO/REPO/data/xml/factura.xml"}}}' \
 | python servers/fel_mcp_server/server_stdio.py
 ```
 
-### 7.3 Render PDF
+**Render one PDF (no logo):**
 
 ```bash
 printf '%s\n' \
 '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-'{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-'{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fel_render","arguments":{"xml_path":"data/xml/factura.xml","logo_path":"data/logos/logo.jpg","out_path":"data/out/factura.pdf"}}}' \
+'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fel_render","arguments":{"xml_path":"/ABSOLUTE/PATH/TO/REPO/data/xml/factura.xml","out_path":"/ABSOLUTE/PATH/TO/REPO/data/out/testing.pdf"}}}' \
 | python servers/fel_mcp_server/server_stdio.py
 ```
 
-### 7.4 Batch Mode + Manifest
+**Batch:**
 
 ```bash
 printf '%s\n' \
 '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-'{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-'{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fel_batch","arguments":{"dir_xml":"data/xml","out_dir":"data/out"}}}' \
+'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fel_batch","arguments":{"dir_xml":"/ABSOLUTE/PATH/TO/REPO/data/xml","out_dir":"/ABSOLUTE/PATH/TO/REPO/data/out/batch"}}}' \
 | python servers/fel_mcp_server/server_stdio.py
 ```
 
-## 8. Relevant File Structure
+## 🖥️ Use with Claude Desktop (MCP)
 
-```bash
-servers/
-└─ fel_mcp_server/
-   ├─ server_stdio.py     # MCP server (no SDK)
-   ├─ config.py           # Centralized parameters (.env driven)
-   └─ fel_pdf.py          # readFelXml(), generatePdf(), helpers
+1. Install Claude Desktop: [https://claude.ai/download](https://claude.ai/download)
+2. Open **Settings -> Developer -> Edit Config**, then edit `claude_desktop_config.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "FEL": {
+          "command": "wsl.exe",
+          "args": [
+            "-e",
+            "/ABSOLUTE/PATH/TO/REPO/venv/bin/python",
+            "/ABSOLUTE/PATH/TO/REPO/servers/fel_mcp_server/server_stdio.py"
+          ]
+        }
+      }
+    }
+    ```
+
+    - Use **absolute WSL paths** in `args`.
+    - If the host logs show errors like `"'xml_path'"`, it means the call was sent **without arguments**; re-run with a prompt that includes the **exact JSON arguments** block.
+
+3. Restart Claude Desktop (PowerShell):
+
+```powershell
+Stop-Process -Name "Claude" -Force; Start-Process "<ABSOLUTE_WINDOWS_PATH_TO_Claude.exe>"
 ```
+
+## 📚 References
+
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+- [Anthropic API](https://docs.anthropic.com/en/api)
+- [JSON-RPC 2.0](https://www.jsonrpc.org/)
